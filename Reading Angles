@@ -1,3 +1,5 @@
+//The following code is meant for the ArduinoIDE
+
 #include <math.h>
 #include "Arduino_BMI270_BMM150.h"
 
