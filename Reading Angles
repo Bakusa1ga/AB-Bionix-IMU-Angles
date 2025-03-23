@@ -1,26 +1,42 @@
 //The following code is meant for the ArduinoIDE
 
 #include <math.h>
-#include "Arduino_BMI270_BMM150.h"
+
+#if defined(ARDUINO_NANO33BLE)
+  #include "Arduino_BMI270_BMM150.h"  // For Nano 33 BLE Sense Rev 2
+  #define BOARD_ID 1
+#elif defined(ARDUINO_NANO_RP2040_CONNECT)
+  #include "Arduino_LSM6DSOX.h"  // For Nano RP2040 Connect
+  #define BOARD_ID 2
+#else
+  #error "Unsupported board! Please use Nano 33 BLE Sense Rev2 or Nano RP2040 Connect."
+#endif
+
 
 float gyroX, gyroY, gyroZ;
 float accX, accY, accZ;
-float angleX = 0, angleY = 0;  // Filtered angles
-float prevGyroX = 0, prevGyroY = 0;
+float angleX = 0, angleY = 0;
 unsigned long prevTime = 0;
-const float alpha = 0.98;  // Complementary filter weight
+
+//complimentary filter variables
+const float alphaFast = 0.90;  
+const float alphaSlow = 0.98;  
+
+const float motionThreshold = 5.0;  
+
 
 void setup() {
   Serial.begin(115200);
   while (!Serial);
-
+  
+  //checking if IMU is connected
   if (!IMU.begin()) {
     Serial.println("Failed to initialize IMU!");
     while (1);
   }
-  Serial.println("IMU initialized.");
-
-  prevTime = millis(); // Start time tracking
+  Serial.print("IMU initialized on Board ");
+  Serial.println(BOARD_ID);
+  prevTime = millis();
 }
 
 void loop() {
@@ -28,29 +44,33 @@ void loop() {
     IMU.readGyroscope(gyroX, gyroY, gyroZ);
     IMU.readAcceleration(accX, accY, accZ);
 
-    // Get current time and compute delta time
     unsigned long currentTime = millis();
-    float deltaTime = (currentTime - prevTime) / 1000.0;  // Convert to seconds
+    //deltaTime is the time interval between data reads
+    float deltaTime = (currentTime - prevTime) / 1000.0;
     prevTime = currentTime;
 
-    // 1. Compute the angle from the accelerometer (tilt estimation)
     float accelAngleX = atan2(accY, accZ) * (180.0 / M_PI);
     float accelAngleY = atan2(accX, accZ) * (180.0 / M_PI);
 
-    // 2. Integrate gyroscope data to get angle change
+    //gyro reads angular acceleration, so we integrate manually with
+    //respect to time (using deltaTime) to get the angle
     float gyroAngleX = angleX + gyroX * deltaTime;
     float gyroAngleY = angleY + gyroY * deltaTime;
 
-    // 3. Apply Complementary Filter
+    //complimentary filter
+    float alpha = (abs(gyroX) > motionThreshold || abs(gyroY) > motionThreshold) ? alphaFast : alphaSlow;
+
     angleX = alpha * gyroAngleX + (1 - alpha) * accelAngleX;
     angleY = alpha * gyroAngleY + (1 - alpha) * accelAngleY;
 
-    // Output the filtered angles
-    Serial.print("Filtered Angle X: ");
-    Serial.print(angleX, 2);
-    Serial.print(", Y: ");
-    Serial.println(angleY, 2);
+  //formatting the data output
+  Serial.print("<"); 
+  Serial.print(BOARD_ID);
+  Serial.print(",");
+  Serial.print(angleX, 2);
+  Serial.print(",");
+  Serial.print(angleY, 2);
+  Serial.println(">");
   }
-
-  delay(10);  // Adjust as needed
+  delay(5);  
 }
