@@ -1,0 +1,124 @@
+#Python script. This program assumes the user has two IMUs connected to the com ports of the computer.
+#The output data from the IMUs must be of the form " <Board ID, AngleX, AngleY> "
+#The program also graphs the total angles in real time
+
+# IMPORTANT NOTE: If the boards are parallel and both oriented the same way (upwards, downwards, etc.), then it is set to 0 degrees, not 180. 
+#Conversely, 180 degrees is set to when the boards are parallel yet inversely oriented. It's the opposite of how you would expect
+
+
+#One issue with the code is that once the connection to an IMU is disrupted, it doesn't reconnect and start displaying angles once the board is connected again
+
+import serial
+import time
+import threading
+import matplotlib.pyplot as plt
+import matplotlib.animation as anim
+
+# IMPORTANT!! Set your correct COM ports
+PORT1 = "COM3"  # Replace with the actual port for Board 1
+PORT2 = "COM7"  # Replace with the actual port for Board 2
+BAUDRATE = 115200 
+
+# Open serial connections
+ser1 = serial.Serial(PORT1, BAUDRATE, timeout=0.01)
+ser2 = serial.Serial(PORT2, BAUDRATE, timeout=0.01)
+time.sleep(2)  # Allow time for Arduino to initialize
+
+# Variables to store data
+angle1X, angle1Y = 0.0, 0.0
+angle2X, angle2Y = 0.0, 0.0
+
+# Lock to prevent data corruption
+data_lock = threading.Lock()
+
+#graphing variables
+time_values = []
+JointAngles = []
+start_time = time.time()
+
+def parse_data(data):
+    """Extract board ID, angleX, and angleY from serial data."""
+    try:
+        data = data.decode("utf-8").strip()
+        if data.startswith("<") and data.endswith(">"):
+            data = data[1:-1]  # Remove < >
+            parts = data.split(",")
+            if len(parts) == 3:
+                board_id = int(parts[0])
+                angleX = float(parts[1])
+                angleY = float(parts[2])
+                return board_id, angleX, angleY
+    except Exception as e:
+        print(f"Error parsing data: {e}")
+    return None, None, None
+
+def read_board(serial_port, board_id):
+    """Threaded function to read from a single board."""
+    global angle1X, angle1Y, angle2X, angle2Y
+    while True:
+        try:
+            if serial_port.in_waiting:
+                with data_lock:  # Prevent simultaneous data writes
+                    board, x, y = parse_data(serial_port.readline())
+                    if board == 1:
+                        angle1X, angle1Y = x, y
+                    elif board == 2:
+                        angle2X, angle2Y = x, y
+        except Exception as e:
+            print(f"Error reading from Board {board_id}: {e}")
+
+# Start reading threads
+thread1 = threading.Thread(target=read_board, args=(ser1, 1))
+thread2 = threading.Thread(target=read_board, args=(ser2, 2))
+
+thread1.daemon = True
+thread2.daemon = True
+thread1.start()
+thread2.start()
+
+#creating plot
+fig, ax = plt.subplots()
+ax.set_title("Joint angle with respect to time")
+ax.set_xlabel("Time")
+ax.set_ylabel("Joint angle (°)")
+line, = ax.plot([], [], 'b-', label="Joint Angle")
+ax.legend()
+
+def update_plot(frame):
+    with data_lock:
+        current_time = time.time() - start_time
+        #total angle (which is what we're graphing) is the sum of the angles
+        angleTotalY = angle1Y + angle2Y
+        angleTotalX = angle1X + angle2X
+
+        time_values.append(current_time)
+        JointAngles.append(angleTotalY)
+
+        #resets the plot after 200 entries
+        if len(time_values) > 200:
+            time_values.pop(0)
+            JointAngles.pop(0)
+        
+        line.set_data(time_values, JointAngles)
+        ax.relim()
+        ax.autoscale_view()
+
+        #Also printing the angles to terminal
+        print(f"Total Angle X: {angleTotalX:.2f}, Total Angle Y: {angleTotalY:.2f}")
+
+    return line,
+
+
+#plot Real Time animation
+ani = anim.FuncAnimation(fig, update_plot, interval = 50)
+plt.show()
+
+
+try: 
+    while True:
+        time.sleep(0.1)  #delay. Lower this for higher speeds (may cause noise)
+
+except KeyboardInterrupt:
+    print("\nExiting...")
+    ser1.close()
+    ser2.close()
